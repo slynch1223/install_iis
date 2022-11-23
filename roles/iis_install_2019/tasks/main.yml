@@ -71,3 +71,165 @@
     - 'E:\Pages'
     - 'F:\HostingTeamWin'
     - 'F:\Logs'
+
+- name: "Download the latest Default Scripts/Files"
+  git:
+    repo: "https://{{ git_url }}/{{ org }}/{{ item }}.git"
+    dest: "/tmp/{{ item }}"
+    force: true
+    recursive: true
+    version: "main"
+  with_items:
+    - "iis_default_scripts"
+    - "iis_default_files"
+  delegate_to: 127.0.0.1
+
+- name: "Deploy Default Scripts/Files"
+  win_copy:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+  with_items:
+    - { src: "/tmp/iis_default_scripts/", dest: 'C:\Scripts\IIS' }
+    - { src: "", dest: "" }
+
+- name: "Remove temp files"
+  file:
+    path: "/tmp/{{ item }}"
+    state: absent
+  with_items:
+    - "iis_default_scripts"
+    - "iis_default_files"
+
+- name: "Delete any GitHub artifacts"
+  win_shell: |
+    Get-ChildItem -Path "C:\\Scripts\\*" -Recurse -Force | Where-Object { $_.Name -like ".git*" -or $_.Name -like "README.md" } | Remove-Item -Force -Recurse
+  failed_when: false
+
+- name: "Download UpdateScripts.ps1"
+  win_get_url:
+    url: "https://raw.{{ git_url }}/{{ org }}/iis_update_scripts/master/UpdateScripts.ps1"
+    dest: 'C:\Scripts\IIS\UpdateScripts.ps1'
+    headers:
+      Authorization: "Bearer {{ github_token }}"
+    force: true
+    timeout: 90
+    validate_Certs: false
+  register: download
+  until: download.status_code == 200
+  retries: 5
+  delay: 5
+
+- name: "Set Default Permissions"
+  win_acl:
+    inherit: ContainerInherit, ObjectInherit
+    path: "{{ item.path }}"
+    rights: "{{ item.rights }}"
+    state: present
+    type: allow
+    user: "{{ item.user }}"
+  with_items:
+    - { path: 'E:\CustomErrors', user: "Everyone", rights: "Read,ExecuteFile" }
+    - { path: 'E:\IIS_Temporary_Compressed_Files', user: 'BUILTIN\IIS_IUSRS', rights: "Read,Write,Modify,FullControl,Delete" }
+    - { path: 'E:\inetpub\wwwroot', user: 'BUILTIN\IIS_IUSRS', rights: "Read,ExecuteFile" }
+    - { path: 'E:\inetpub\wwwroot', user: 'BUILTIN\Users', rights: "Read,ExecuteFile" }
+    - { path: 'E:\LoadBalance', user: "Authenticated Users", rights: "Read,ExecuteFile" }
+    - { path: 'E:\LoadBalance', user: "IUSR", rights: "Read,ExecuteFile" }
+    - { path: 'F:\Logs\TraceLogs', user: 'BUILTIN\IIS_IUSRS', rights: "Read,Write,Modify,FullControl,Delete" }
+
+- name: "Wait until WebAdministration is Available"
+  win_shell: 'if (Get-Module -ListAvailable -Name "WebAdministration") { "ready"} else {"wait"}'
+  register: poll
+  until: "'ready' in poll.stdout"
+  retries: 20
+  delay: 15
+  changed_when: false
+
+- name: "Setup Central Log File config"
+  win_shell:
+    command: 'C:\Windows\Systems32\inetsrv\appcmd.exe set config -section:system.applicationHost/log {{ item }} /commit:apphost'
+  with_items:
+    - '/centralBinaryLogFile.directory:"F:\Logs\WebLogs"'
+    - '/centralBinaryLogFile.localTimeRollover:"true"'
+    - '/centralBinaryLogFile.period:"Daily"'
+    - '/centralW3CLogFile.directory:"F:\Logs\WebLogs"'
+    - '/centralW3CLogFile.enabled:"true"'
+    - '/centralW3CLogFile.localTimeRollover:"true"'
+    - '/centralW3CLogFile.period:"Daily"'
+
+- name: "Setup Web Site Log File Defaults"
+  win_shell:
+    command: 'C:\Windows\Systems32\inetsrv\appcmd.exe set config -section:system.applicationHost/sites {{ item }} /commit:apphost'
+  with_items:
+    - '/siteDefaults.logFile.directory:"F:\Logs\WebLogs"'
+    - '/siteDefaults.logFile.enabled:"true"'
+    - '/siteDefaults.logFile.localTimeRollover:"true"'
+    - '/siteDefaults.logFile.period:"Daily"'
+    - '/siteDefaults.traceFailedRequestsLogging.directory:"F:\Logs\TraceLogs"'
+
+- name: "Setup HTTP Compression"
+  win_shell:
+    command: 'C:\Windows\Systems32\inetsrv\appcmd.exe set config -section:system.webServer/httpCompression /directory:"E:\IIS_Temporary_Compressed_Files" /commit:apphost'
+
+- name: "Setup Default Authentication"
+  win_shell:
+    command: 'C:\Windows\Systems32\inetsrv\appcmd.exe set config {{ item }} /enabled:true /commit:apphost'
+  with_items:
+    - "/section:windowsAuthentication"
+    - "-/section:anonymousAuthentication"
+
+- name: "Increase Kerberos Buffer Size"
+  win_regedit:
+    data: "{{ item.value }}"
+    hive: 'C:\Users\Default\NTUSER.dat'
+    name: "{{ item.name }}"
+    path: 'HKLM:\System\CurrentControlSet\Services\HTTP\Parameters'
+    type: "dword"
+    state: present
+  with_items:
+    - { name: "MaxFieldLength", value: "0x00008000" }
+    - { name: "MaxRequestBytes", value: "0x00008000" }
+
+- name: "Perform IISReset"
+  win_shell: "iisreset"
+
+- name: "Setup Desktop Customizations"
+  win_regedit:
+    data: "{{ item.value }}"
+    hive: 'C:\Users\Default\NTUSER.dat'
+    name: "{{ item.name }}"
+    path: 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced'
+    type: "dword"
+    state: present
+  with_items:
+    - { name: "AlwaysShowMenus", value: "1" }
+    - { name: "DontPrettyPath", value: "0" }
+    - { name: "Hidden", value: "2" }
+    - { name: "HideFileExt", value: "0" }
+    - { name: "IconsOnly", value: "1" }
+    - { name: "LaunchTo", value: "1" }
+    - { name: "NavPaneExpandToCurrentFolder", value: "0" }
+    - { name: "NavPaneShowAllFolders", value: "0" }
+    - { name: "ShowTaskViewButton", value: "0" }
+
+- name: "Set Default File Associations"
+  win_shell: "{{ item }}"
+  args:
+    chdir: 'C:\Windows\System32'
+  with_items:
+    - CMD /c "FTYPE txtfile=C:\Windows\System32\notepad.exe '%1'"
+    - CMD /c "ASSOC .asp=txtFile"
+    - CMD /c "ASSOC .aspx=txtFile"
+    - CMD /c "ASSOC .config=txtFile"
+    - CMD /c "ASSOC .htm=txtFile"
+    - CMD /c "ASSOC .html=txtFile"
+    - CMD /c "ASSOC .log=txtFile"
+    - CMD /c "ASSOC .old=txtFile"
+
+- name: "Create Shortcut on Desktop"
+  win_shortcut:
+    description: "Internet Information Services (IIS) Manager"
+    dest: 'C:\Users\Public\Desktop\Internet Information Services (IIS) Manager.lnk'
+    icon: '%windir%\System32\intesrv\InetMgr.exe'
+    src: '%windir%\System32\intesrv\InetMgr.exe'
+    windowstyle: maximized
+    state: present
