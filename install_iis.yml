@@ -1,0 +1,79 @@
+---
+- name: "Install IIS"
+  hosts: all
+  gather_facts: false
+
+  vars:
+    reboot: "{% if tower_user_name is defined and 'myServiceID' in tower_user_name %}True{% else %}False{% endif %}"
+    output: "IIS Install Job Started!"
+
+  tasks:
+    - block:
+        - name: "Download shared code library"
+          git:
+            repo: "https://github.com/slynch1223/ansible_shared_code.git"
+            dest: "/tmp/shared_code"
+            force: true
+            recursive: true
+            version: "main"
+          delegate_to: 127.0.0.1
+
+        - name: "Load shared code for use below"
+          include_vars: "/tmp/shared_code/{{ item }}"
+          with_items:
+            - "main.yml"
+            - "winrm_connection.yml"
+          no_log: "{% if 'connection' in item | lower %}True{% else %}False{% endif %}"
+
+      rescue:
+        - name: "Send Email Notification for failed job"
+          mail:
+            host: "myEmailHost.com"
+            port: 587
+            username: "{{ automation_user }}"
+            password: "{{ automation_password }}"
+            charset: utf8
+            subtype: html
+            headers: "Reply-To=no-reply@myEmailHost.com"
+            to: "slynch1223@gmail.com"
+            from: "IIS_Alerts@myEmailHost.com"
+            subject: "IIS Install Failure"
+            body: |
+              <h2>IIS Install has failed on <b>{{ inventory_hostname }}</b>! Please review the below error for more details.</h2><br />
+
+              Failed Task: {{ ansible_failed_task.name }}
+              Error Message: {{ ansible_failed_result.msg }}
+          delegate_to: 127.0.0.1
+
+      always:
+        - name: "Clean up files"
+          file:
+            path: "/tmp/shared_code"
+            state: absent
+
+    - name: "Reboot to clear any pending updates/installs"
+      win_reboot:
+        post_reboot_delay: 300
+        reboot_timeout: 900
+      when: reboot | bool
+
+    - name: "Get Server Details"
+      setup:
+      register: setup
+      ignore_unreachable: true
+
+    - name: "Fail if only one IP Address"
+      fail:
+        msg: "Cannot continue IIS Install. No Web Site VIPs available."
+      when: ansible_ip_addresses | length < 2
+
+    - name: "Run IIS Install Role"
+      include_role:
+        name: "iis_install_2019"
+
+    - name: "Update Job Output"
+      set_fact:
+        output: "{{ output + [ item ] }}"
+      with_items:
+        - "Host Name: {{ inventory_hostname | default() }}"
+        - "Requested By: {{ requested_by | default() }}"

@@ -1,0 +1,73 @@
+---
+- name: "Install IIS Features and Management Tools"
+  win_feature:
+    name:
+      - DSC-Service
+      - NET-Framework-45-ASPNET
+      - NET-Framework-45-CORE
+      - NET-WCF-HTTP-Activation45
+      - NET-WCF-PIPE-Activation45
+      - NET-WCF-TCP-Activation45
+      - Web-Server
+      - Web-App-Dev
+      - Web-AppInit
+      - Web-ASP
+      - Web-ASP-Net45
+      - Web-Basic-Auth
+      - Web-Cert-Auth
+      - Web-CertProvider
+      - Web-CGI
+      - Web-Client-Auth
+      - Web-Common-HTTP
+      - Web-Custom-Logging
+      - Web-Default-Doc
+      - Web-Digest-Auth
+      - Web-Dir-Browsing
+      - Web-Dyn-Compression
+      - Web-Filtering
+      - Web-HTTP-Errors
+      - Web-HTTP-Logging
+      - Web-HTTP-Redirect
+      - Web-HTTP-Tracing
+      - Web-Includes
+      - Web-IP-Security
+      - Web-ISAPI-Ext
+      - Web-ISAPI-Filter
+      - Web-Log-Libraries
+      - Web-Mgmt-Console
+      - Web-Mgmt-Service
+      - Web-Mgmt-Tools
+      - Web-Net-Ext45
+      - Web-ODBC-Logging
+      - Web-Performance
+      - Web-Request-Monitor
+      - Web-Scripting-Tools
+      - Web-Security
+      - Web-Stat-Compression
+      - Web-Static-Content
+      - Web-URL-Auth
+      - Web-Sockets
+      - Web-Windows-Auth
+    state: present
+
+- name: "Remove All Unwanted permissions from E: and F: Drives"
+  win_shell: |
+    $ACL = Get-ACL -Path "{{ item }}"
+    $ACL.Access | Where-Object {$_.IdentityReference -ne "BUILTIN\Administrators"} | ForEach-Object {$ACL.RemoveAccessRule($_)}
+    $ACL.SetAccessRuleProtection($true, $true)
+    $ACL | Set-ACL "{{ item }}"
+
+- name: "Create Default Scripts/Files"
+  win_file:
+    path: "{{ item }}"
+    state: directory
+  with_items:
+    - 'C:\inetpub\temp\AppPools'
+    - 'C:\Scripts\IIS\Logs'
+    - 'E:\CustomErrors'
+    - 'E:\IIS_Temporary_Compressed_Files'
+    - 'E:\inetpub\WWWRoot'
+    - 'E:\LoadBalancer'
+    - 'E:\Pages'
+    - 'F:\HostingTeamWin'
+    - 'F:\Logs'
