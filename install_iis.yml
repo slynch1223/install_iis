@@ -25,6 +25,33 @@
             - "winrm_connection.yml"
           no_log: "{% if 'connection' in item | lower %}True{% else %}False{% endif %}"
 
+        - name: "Reboot to clear any pending updates/installs"
+          win_reboot:
+            post_reboot_delay: 300
+            reboot_timeout: 900
+          when: reboot | bool
+
+        - name: "Get Server Details"
+          setup:
+          register: setup
+          ignore_unreachable: true
+
+        - name: "Fail if only one IP Address"
+          fail:
+            msg: "Cannot continue IIS Install. No Web Site VIPs available."
+          when: ansible_ip_addresses | length < 2
+
+        - name: "Run IIS Install Role"
+          include_role:
+            name: "iis_install_2019"
+
+        - name: "Update Job Output"
+          set_fact:
+            output: "{{ output + [ item ] }}"
+          with_items:
+            - "Host Name: {{ inventory_hostname | default() }}"
+            - "Requested By: {{ requested_by | default() }}"
+
       rescue:
         - name: "Send Email Notification for failed job"
           mail:
@@ -50,30 +77,3 @@
           file:
             path: "/tmp/shared_code"
             state: absent
-
-    - name: "Reboot to clear any pending updates/installs"
-      win_reboot:
-        post_reboot_delay: 300
-        reboot_timeout: 900
-      when: reboot | bool
-
-    - name: "Get Server Details"
-      setup:
-      register: setup
-      ignore_unreachable: true
-
-    - name: "Fail if only one IP Address"
-      fail:
-        msg: "Cannot continue IIS Install. No Web Site VIPs available."
-      when: ansible_ip_addresses | length < 2
-
-    - name: "Run IIS Install Role"
-      include_role:
-        name: "iis_install_2019"
-
-    - name: "Update Job Output"
-      set_fact:
-        output: "{{ output + [ item ] }}"
-      with_items:
-        - "Host Name: {{ inventory_hostname | default() }}"
-        - "Requested By: {{ requested_by | default() }}"
